@@ -18,17 +18,21 @@ const mockProducts = [
 let sessionProducts = [...mockProducts];
 let sessionOrders = [];
 
+// Improved MongoDB Connection for Vercel
 let dbConnected = false;
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => {
+const connectDB = async () => {
+    if (dbConnected) return;
+    try {
+        await mongoose.connect(process.env.MONGO_URI);
         console.log("MongoDB Connected");
         dbConnected = true;
-    })
-    .catch(err => {
+    } catch (err) {
         console.log("MongoDB Connection Failed - Using In-Memory Storage (Demo Mode)");
-    });
+    }
+};
+connectDB();
 
-// Order Schema for DB
+// Order Schema - Fixed for OverwriteModelError
 const OrderSchema = new mongoose.Schema({
     customerName: String,
     address: String,
@@ -38,9 +42,17 @@ const OrderSchema = new mongoose.Schema({
     totalPrice: Number,
     date: { type: Date, default: Date.now }
 });
-const Order = mongoose.model("Order", OrderSchema);
+const Order = mongoose.models.Order || mongoose.model("Order", OrderSchema);
 
 app.use("/api/admin", require("./routes/admin"));
+
+// Middleware to ensure DB is connected for API calls
+app.use(async (req, res, next) => {
+    if (!dbConnected && process.env.MONGO_URI) {
+        await connectDB();
+    }
+    next();
+});
 
 // --- Product Routes ---
 app.get("/api/products", async (req, res) => {
@@ -48,7 +60,7 @@ app.get("/api/products", async (req, res) => {
         try {
             const Product = require("./models/Product");
             const dbProducts = await Product.find();
-            return res.json([...dbProducts, ...sessionProducts.filter(sp => !sp._id.startsWith("m"))]);
+            return res.json([...dbProducts, ...sessionProducts.filter(sp => !sp._id.toString().startsWith("m"))]);
         } catch (err) {
             return res.json(sessionProducts);
         }
@@ -126,7 +138,7 @@ app.post("/api/orders", async (req, res) => {
         }
     }
 
-    // Demo Mode: Add to memory
+    // Fallback: Add to memory
     const newOrder = {
         _id: "o" + Date.now(),
         customerName, address, phone, city, productName, totalPrice,
@@ -140,7 +152,6 @@ app.get("/api/orders", require("./middleware/auth"), async (req, res) => {
     if (dbConnected) {
         try {
             const dbOrders = await Order.find().sort({ date: -1 });
-            // Merge with session orders for demo purposes
             return res.json([...dbOrders, ...sessionOrders]);
         } catch (err) {
             return res.json(sessionOrders);
